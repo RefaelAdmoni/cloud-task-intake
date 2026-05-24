@@ -1,0 +1,176 @@
+# ============================================================
+# Cloud Task Intake — Local Development Environment
+# ============================================================
+#
+# This file is for LOCAL DEVELOPMENT ONLY.
+# It is NOT intended to be deployed as-is on a single VM.
+#
+# Each service below represents a logical component that must be
+# translated into a separate managed cloud service in production.
+# Read the comments on each service for the production equivalents.
+# ============================================================
+
+version: "3.9"
+
+services:
+
+  # ------------------------------------------------------------
+  # Frontend — React/Vite SPA
+  # ------------------------------------------------------------
+  # Served here by nginx inside a container on port 5173.
+  #
+  # Production equivalent: CDN + static file hosting
+  #   Azure:  Static Web Apps  /  Storage Static Website + Azure CDN  /  Front Door
+  #   AWS:    S3 + CloudFront
+  #   GCP:    Cloud Storage + Cloud CDN  /  Firebase Hosting
+  # ------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:3000
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend-api
+
+  # ------------------------------------------------------------
+  # Backend API — Fastify/Node.js HTTP API
+  # ------------------------------------------------------------
+  # Runs as a container locally on port 3000.
+  #
+  # Production equivalent: managed container or serverless runtime
+  #   Azure:  Container Apps  /  App Service
+  #   AWS:    App Runner  /  ECS Fargate  /  Lambda (with adapter)
+  #   GCP:    Cloud Run
+  # ------------------------------------------------------------
+  backend-api:
+    build: ./api
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://taskuser:taskpass@postgres:5432/taskdb
+      CORS_ORIGIN: http://localhost:5173
+      QUEUE_PROVIDER: redis
+      REDIS_URL: redis://redis:6379
+      STORAGE_PROVIDER: local
+      LOCAL_STORAGE_PATH: /data/uploads
+      PUBLIC_STORAGE_BASE_URL: http://localhost:3000/uploads
+      JWT_SECRET: changeme-replace-in-production-with-a-long-random-string
+      JWT_EXPIRES_IN: 24h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads:/data/uploads
+
+  # ------------------------------------------------------------
+  # Worker — Async queue consumer
+  # ------------------------------------------------------------
+  # A separate long-running process that consumes messages from
+  # the queue and processes tasks in the background.
+  #
+  # Production equivalent: separate managed worker service
+  #   Azure:  Container Apps Job/App  /  App Service WebJob
+  #   AWS:    ECS Fargate worker service  /  Lambda consumer
+  #   GCP:    Cloud Run Job  /  Cloud Run service (Pub/Sub push subscriber)
+  #
+  # Must be deployed independently from the API — do NOT merge
+  # the worker and API into a single deployment unit.
+  # ------------------------------------------------------------
+  worker:
+    build: ./worker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://taskuser:taskpass@postgres:5432/taskdb
+      QUEUE_PROVIDER: redis
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend-api:
+        condition: service_started
+
+  # ------------------------------------------------------------
+  # PostgreSQL — Relational database (local substitute)
+  # ------------------------------------------------------------
+  # Runs a local Postgres instance for development.
+  # In production this container does NOT exist.
+  #
+  # Production equivalent: managed relational database
+  #   Azure:  Azure Database for PostgreSQL (Flexible Server)
+  #   AWS:    RDS PostgreSQL
+  #   GCP:    Cloud SQL (PostgreSQL)
+  #
+  # Replace DATABASE_URL in the API and worker with the managed
+  # endpoint and inject credentials from a secrets manager.
+  # ------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: taskdb
+      POSTGRES_USER: taskuser
+      POSTGRES_PASSWORD: taskpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskuser -d taskdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------------
+  # Redis — Queue/messaging substitute (local only)
+  # ------------------------------------------------------------
+  # Used locally as a Redis Streams queue between the API and worker.
+  # In production this container does NOT exist.
+  #
+  # Production equivalent: managed message queue or streaming service
+  #   Azure:  Azure Service Bus  (preferred)
+  #   AWS:    SQS
+  #   GCP:    Pub/Sub
+  #   Redis:  acceptable only if a managed Redis service (e.g. Azure Cache
+  #           for Redis, ElastiCache) is justified and cost-appropriate
+  #
+  # Swap QUEUE_PROVIDER to "azure-service-bus", "sqs", or "pubsub" and
+  # provide the matching env vars — see docs/environment.md.
+  # ------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------------
+  # Storage — Local file storage substitute
+  # ------------------------------------------------------------
+  # The backend-api mounts a local volume for file uploads when
+  # STORAGE_PROVIDER=local.  In production this volume does NOT exist.
+  #
+  # Production equivalent: managed object storage
+  #   Azure:  Azure Blob Storage
+  #   AWS:    S3
+  #   GCP:    Google Cloud Storage (GCS)
+  #
+  # Swap STORAGE_PROVIDER to "azure-blob", "s3", or "gcs" and
+  # provide the matching env vars — see docs/environment.md.
+  # (No separate container is needed; the backend calls the cloud SDK directly.)
+  # ------------------------------------------------------------
+  # NOTE: There is no explicit "storage" container because the local
+  # implementation uses a bind-mounted volume on the backend-api service.
+  # Cloud storage is accessed via SDK — no sidecar required.
+
+volumes:
+  pgdata:
+  uploads:
