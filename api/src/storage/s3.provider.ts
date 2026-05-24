@@ -1,10 +1,11 @@
 // PLACEHOLDER - AWS S3 implementation
 //
 // Required env vars:
-//   AWS_REGION            — e.g. us-east-1
-//   AWS_S3_BUCKET         — S3 bucket name
-//   AWS_ACCESS_KEY_ID     — (not needed when running on AWS with an IAM role)
-//   AWS_SECRET_ACCESS_KEY — (not needed when running on AWS with an IAM role)
+//   AWS_REGION    — e.g. us-east-1
+//   AWS_S3_BUCKET — S3 bucket name
+//
+// Do not provide static AWS access keys through application environment variables.
+// Use workload identity, instance/task role, or the cloud SDK default credential provider chain.
 //
 // Install:
 //   npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner

@@ -21,8 +21,6 @@ const envSchema = z.object({
   // SQS
   AWS_REGION: z.string().optional(),
   SQS_QUEUE_URL: z.string().optional(),
-  AWS_ACCESS_KEY_ID: z.string().optional(),
-  AWS_SECRET_ACCESS_KEY: z.string().optional(),
 
   // GCP Pub/Sub
   GCP_PROJECT_ID: z.string().optional(),

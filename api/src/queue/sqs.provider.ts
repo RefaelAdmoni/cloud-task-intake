@@ -1,10 +1,11 @@
 // PLACEHOLDER - AWS SQS implementation
 //
 // Required env vars:
-//   AWS_REGION            — e.g. us-east-1
-//   SQS_QUEUE_URL         — full URL of the SQS queue
-//   AWS_ACCESS_KEY_ID     — (not needed when running on AWS with an IAM role)
-//   AWS_SECRET_ACCESS_KEY — (not needed when running on AWS with an IAM role)
+//   AWS_REGION    — e.g. us-east-1
+//   SQS_QUEUE_URL — full URL of the SQS queue
+//
+// Do not provide static AWS access keys through application environment variables.
+// Use workload identity, instance/task role, or the cloud SDK default credential provider chain.
 //
 // Install:
 //   npm install @aws-sdk/client-sqs

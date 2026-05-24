@@ -35,8 +35,6 @@ const envSchema = z.object({
   // AWS S3
   AWS_REGION: z.string().optional(),
   AWS_S3_BUCKET: z.string().optional(),
-  AWS_ACCESS_KEY_ID: z.string().optional(),
-  AWS_SECRET_ACCESS_KEY: z.string().optional(),
 
   // GCP Storage
   GCP_PROJECT_ID: z.string().optional(),
@@ -52,10 +50,6 @@ const envSchema = z.object({
   // GCP Pub/Sub
   PUBSUB_TOPIC_ID: z.string().optional(),
   PUBSUB_SUBSCRIPTION_ID: z.string().optional(),
-
-  // Telegram
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
 
   // JWT
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),

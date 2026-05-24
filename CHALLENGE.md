@@ -62,7 +62,9 @@ The goal is to evaluate:
 
 - Configure CI/CD using GitHub Actions or GitLab CI
 
-- Static cloud credentials should not be stored in CI/CD secrets
+- Static cloud credentials must not be stored in the repository or in CI/CD secrets.
+
+- CI/CD authentication should use OIDC mechanism.
 
 - Provide DNS instructions required for Cloudflare configuration
 
