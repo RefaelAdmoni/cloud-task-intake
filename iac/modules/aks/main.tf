@@ -39,7 +39,7 @@ resource "azurerm_kubernetes_cluster" "main" {
   # Automatic channel: Azure handles patch-version upgrades automatically.
   # WHY 'patch' not 'rapid': patch only upgrades 1.29.x → 1.29.y (same minor),
   # which is safe. 'rapid' can upgrade minor versions unexpectedly.
-  automatic_channel_upgrade = "patch"
+  automatic_upgrade_channel = "patch"
 
   # System node pool — only Kubernetes system components run here.
   # Taint prevents application pods from landing here accidentally.
@@ -53,6 +53,7 @@ resource "azurerm_kubernetes_cluster" "main" {
     type                 = "VirtualMachineScaleSets"
     zones                = ["1", "2"]  # Spread across 2 AZs for zone-level HA
     only_critical_addons_enabled = true  # Taint = CriticalAddonsOnly
+
 
     upgrade_settings {
       max_surge = "33%"   # Allow 33% extra nodes during upgrade (rolling, no downtime)

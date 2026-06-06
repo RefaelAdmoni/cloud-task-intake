@@ -10,7 +10,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.50"
+      version = "~> 3.110"
     }
     azuread = {
       source  = "hashicorp/azuread"
@@ -22,11 +22,11 @@ terraform {
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.1.0"
+      version = "~> 2.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0.3"
+      version = "~> 2.31"
     }
   }
 
@@ -180,12 +180,15 @@ module "database" {
   prefix              = local.prefix
   tags                = local.common_tags
 
-  subnet_data_id      = module.networking.subnet_data_id
-  private_dns_zone_id = module.networking.postgres_private_dns_zone_id
-  db_sku              = var.db_sku
-  db_storage_mb       = var.db_storage_mb
-  db_name             = var.db_name
-  db_admin_login      = var.db_admin_login
+  subnet_data_id              = module.networking.subnet_data_id
+  private_dns_zone_id         = module.networking.postgres_private_dns_zone_id
+  db_sku                      = var.db_sku
+  db_storage_mb               = var.db_storage_mb
+  db_name                     = var.db_name
+  db_admin_login              = var.db_admin_login
+  high_availability_enabled    = var.high_availability_enabled
+  enable_geo_redundant_backup = var.enable_geo_redundant_backup
+  backup_retention_days       = var.backup_retention_days
 }
 
 module "messaging" {
@@ -268,6 +271,7 @@ module "swa" {
   location            = azurerm_resource_group.main.location
   prefix              = local.prefix
   tags                = local.common_tags
+  custom_domain       = var.custom_domain
 }
 
 ###############################################################################
