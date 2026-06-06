@@ -52,7 +52,7 @@ resource "azurerm_subnet" "data" {
 
   # WHY: private_endpoint_network_policies must be Disabled for private endpoints
   # to receive traffic. Azure requirement — not optional.
-  private_endpoint_network_policies_enabled = false
+  private_endpoint_network_policies = "Disabled"
 }
 
 resource "azurerm_subnet" "endpoints" {
@@ -61,7 +61,7 @@ resource "azurerm_subnet" "endpoints" {
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.subnet_endpoints_cidr]
 
-  private_endpoint_network_policies_enabled = false
+  private_endpoint_network_policies = "Disabled"
 }
 
 ###############################################################################

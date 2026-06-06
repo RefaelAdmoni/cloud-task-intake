@@ -3,7 +3,7 @@
 ###############################################################################
 
 resource "azurerm_container_registry" "main" {
-  name                = "acr${replace(var.prefix, "-", "")}"  # No hyphens allowed
+  name                = "acr${replace(var.prefix, "-", "")}" # No hyphens allowed
   location            = var.location
   resource_group_name = var.resource_group_name
   sku                 = "Premium"
@@ -29,9 +29,9 @@ resource "azurerm_container_registry" "main" {
   }
 
   # Trust policy: only signed images can be pulled (requires Notary).
-#  trust_policy {
-#    enabled = false   # Enable when image signing workflow is set up
-#  }
+  #  trust_policy {
+  #    enabled = false   # Enable when image signing workflow is set up
+  #  }
 
   tags = var.tags
 }

@@ -10,8 +10,6 @@
 # Read the comments on each service for the production equivalents.
 # ============================================================
 
-version: "3.9"
-
 services:
 
   # ------------------------------------------------------------
@@ -28,7 +26,7 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_BASE_URL: http://localhost:3000
+        VITE_API_BASE_URL: ""
     ports:
       - "5173:80"
     depends_on:
@@ -46,6 +44,7 @@ services:
   # ------------------------------------------------------------
   backend-api:
     build: ./api
+    command: sh -c "node dist/db/migrate.js && node dist/db/seed.js && node dist/index.js"
     ports:
       - "3000:3000"
     environment:
@@ -56,7 +55,7 @@ services:
       REDIS_URL: redis://redis:6379
       STORAGE_PROVIDER: local
       LOCAL_STORAGE_PATH: /data/uploads
-      PUBLIC_STORAGE_BASE_URL: http://localhost:3000/uploads
+      PUBLIC_STORAGE_BASE_URL: http://localhost:5173/api/uploads
       JWT_SECRET: changeme-replace-in-production-with-a-long-random-string
       JWT_EXPIRES_IN: 24h
     depends_on:

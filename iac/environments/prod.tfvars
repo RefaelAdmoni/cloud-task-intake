@@ -24,12 +24,12 @@ aks_system_vm_size    = "Standard_D2s_v3"
 aks_user_vm_size      = "Standard_D4s_v3"
 
 # ── Database ──────────────────────────────────────────────────────────────────
-db_sku        = "GP_Standard_D2s_v3"   # General Purpose — 2 vCores, 8 GB RAM
-db_storage_mb = 65536                  # 64 GB — expand online as needed
-db_name       = "cloudtaskdb"
+db_sku         = "GP_Standard_D2s_v3" # General Purpose — 2 vCores, 8 GB RAM
+db_storage_mb  = 65536                # 64 GB — expand online as needed
+db_name        = "cloudtaskdb"
 db_admin_login = "pgadmin"
 
 # ── Application ───────────────────────────────────────────────────────────────
-custom_domain = "app.example.com"      # Replace with actual domain
-alert_email   = "devops@example.com"
-allowed_origin = "https://app.example.com"  # Replace with actual domain
+custom_domain  = "app.example.com" # Replace with actual domain
+alert_email    = "devops@example.com"
+allowed_origin = "https://app.example.com" # Replace with actual domain

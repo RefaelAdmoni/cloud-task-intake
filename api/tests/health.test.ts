@@ -10,7 +10,7 @@ vi.mock("../src/config", () => ({
     QUEUE_PROVIDER: "memory",
     STORAGE_PROVIDER: "local",
     LOCAL_STORAGE_PATH: "/tmp/test-uploads",
-    PUBLIC_STORAGE_BASE_URL: "http://localhost:3000/uploads",
+    PUBLIC_STORAGE_BASE_URL: "http://localhost:3000/api/uploads",
   },
 }));
 

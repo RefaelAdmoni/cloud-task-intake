@@ -27,7 +27,7 @@ resource "azurerm_servicebus_queue" "tasks" {
   # - dead_lettering_on_message_expiration: automatic DLQ on TTL expiry
   lock_duration                        = "PT5M"
   max_size_in_megabytes                = 5120
-  default_message_ttl                  = "P14D"   # 14 days max TTL
+  default_message_ttl                  = "P14D" # 14 days max TTL
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 5
   requires_duplicate_detection         = false
@@ -36,8 +36,8 @@ resource "azurerm_servicebus_queue" "tasks" {
 
 # Dead-letter monitoring queue (separate from the built-in DLQ, for alerting)
 resource "azurerm_servicebus_queue" "tasks_dlq_monitor" {
-  name         = "tasks-dlq-monitor"
-  namespace_id = azurerm_servicebus_namespace.main.id
+  name               = "tasks-dlq-monitor"
+  namespace_id       = azurerm_servicebus_namespace.main.id
   max_delivery_count = 1
 }
 

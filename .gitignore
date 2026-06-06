@@ -7,3 +7,6 @@ uploads/
 .DS_Store
 docs
 .env
+iac/README-permissions.md
+.codex/
+.agents/

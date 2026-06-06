@@ -1,5 +1,5 @@
 output "server_fqdn" { value = azurerm_postgresql_flexible_server.main.fqdn }
-output "db_name"     { value = azurerm_postgresql_flexible_server_database.app.name }
+output "db_name" { value = azurerm_postgresql_flexible_server_database.app.name }
 
 output "connection_string" {
   sensitive = true

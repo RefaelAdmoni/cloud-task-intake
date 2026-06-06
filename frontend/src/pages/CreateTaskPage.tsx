@@ -52,16 +52,16 @@ export default function CreateTaskPage() {
         );
         fileUrl = presign.fileUrl;
 
-        try {
-          await fetch(presign.uploadUrl, {
-            method: "PUT",
-            body: file,
-            headers: {
-              "Content-Type": file.type || "application/octet-stream",
-            },
-          });
-        } catch {
-          console.warn("File upload to presigned URL failed (expected in local dev)");
+        const uploadResponse = await fetch(presign.uploadUrl, {
+          method: "PUT",
+          body: file,
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+          },
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error("Failed to upload attachment");
         }
       }
 

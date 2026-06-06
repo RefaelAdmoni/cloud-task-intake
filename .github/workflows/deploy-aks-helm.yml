@@ -1,0 +1,185 @@
+name: Deploy To AKS With Helm
+
+on:
+  workflow_run:
+    workflows:
+      - Build And Push To ACR
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Optional image tag to deploy. Defaults to sha derived from the triggering commit.
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-aks-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Helm Deploy
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        (
+          github.event.workflow_run.head_branch == 'main' ||
+          startsWith(github.event.workflow_run.head_branch, 'hotfix/')
+        )
+      )
+    permissions:
+      contents: read
+      id-token: write
+    environment: production
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve deployment settings
+        id: settings
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
+            image_tag="${{ inputs.image_tag }}"
+          elif [ -n "${{ github.event.workflow_run.head_sha }}" ]; then
+            image_tag="sha-${{ github.event.workflow_run.head_sha }}"
+            image_tag="${image_tag:0:11}"
+          else
+            image_tag="sha-${GITHUB_SHA::7}"
+          fi
+
+          namespace="${{ vars.AKS_NAMESPACE }}"
+          if [ -z "$namespace" ]; then
+            namespace="default"
+          fi
+
+          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
+          echo "namespace=$namespace" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Get AKS admin credentials
+        shell: bash
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ vars.AKS_RESOURCE_GROUP }}" \
+            --name "${{ vars.AKS_CLUSTER_NAME }}" \
+            --admin \
+            --overwrite-existing
+
+      - name: Verify cluster access
+        shell: bash
+        run: |
+          kubectl cluster-info
+          kubectl get namespaces
+
+      - name: Lint Helm charts
+        shell: bash
+        run: |
+          helm lint ./iac/helm/api \
+            --set image.repository="${{ vars.ACR_LOGIN_SERVER }}/api" \
+            --set image.tag="${{ steps.settings.outputs.image_tag }}" \
+            --set workloadIdentity.clientId="${{ vars.PROD_API_MI_CLIENT_ID }}" \
+            --set workloadIdentity.tenantId="${{ vars.AZURE_TENANT_ID }}" \
+            --set keyvault.name="${{ vars.KEY_VAULT_NAME }}" \
+            --set keyvault.vaultUri="${{ vars.KEY_VAULT_URI }}" \
+            --set ingress.host="${{ vars.INGRESS_HOST }}"
+
+          helm lint ./iac/helm/worker \
+            --set image.repository="${{ vars.ACR_LOGIN_SERVER }}/worker" \
+            --set image.tag="${{ steps.settings.outputs.image_tag }}" \
+            --set workloadIdentity.clientId="${{ vars.PROD_WORKER_MI_CLIENT_ID }}" \
+            --set workloadIdentity.tenantId="${{ vars.AZURE_TENANT_ID }}" \
+            --set keyvault.name="${{ vars.KEY_VAULT_NAME }}" \
+            --set serviceBus.namespace="${{ vars.SERVICEBUS_NAMESPACE }}"
+
+      - name: Render API chart
+        shell: bash
+        run: |
+          helm template api ./iac/helm/api \
+            --namespace "${{ steps.settings.outputs.namespace }}" \
+            --set image.repository="${{ vars.ACR_LOGIN_SERVER }}/api" \
+            --set image.tag="${{ steps.settings.outputs.image_tag }}" \
+            --set workloadIdentity.clientId="${{ vars.PROD_API_MI_CLIENT_ID }}" \
+            --set workloadIdentity.tenantId="${{ vars.AZURE_TENANT_ID }}" \
+            --set keyvault.name="${{ vars.KEY_VAULT_NAME }}" \
+            --set keyvault.vaultUri="${{ vars.KEY_VAULT_URI }}" \
+            --set ingress.host="${{ vars.INGRESS_HOST }}" \
+            > /tmp/api-rendered.yaml
+
+      - name: Render worker chart
+        shell: bash
+        run: |
+          helm template worker ./iac/helm/worker \
+            --namespace "${{ steps.settings.outputs.namespace }}" \
+            --set image.repository="${{ vars.ACR_LOGIN_SERVER }}/worker" \
+            --set image.tag="${{ steps.settings.outputs.image_tag }}" \
+            --set workloadIdentity.clientId="${{ vars.PROD_WORKER_MI_CLIENT_ID }}" \
+            --set workloadIdentity.tenantId="${{ vars.AZURE_TENANT_ID }}" \
+            --set keyvault.name="${{ vars.KEY_VAULT_NAME }}" \
+            --set serviceBus.namespace="${{ vars.SERVICEBUS_NAMESPACE }}" \
+            > /tmp/worker-rendered.yaml
+
+      - name: Deploy API release
+        shell: bash
+        run: |
+          helm upgrade --install api ./iac/helm/api \
+            --namespace "${{ steps.settings.outputs.namespace }}" \
+            --create-namespace \
+            --atomic \
+            --wait \
+            --timeout 10m \
+            --set image.repository="${{ vars.ACR_LOGIN_SERVER }}/api" \
+            --set image.tag="${{ steps.settings.outputs.image_tag }}" \
+            --set workloadIdentity.clientId="${{ vars.PROD_API_MI_CLIENT_ID }}" \
+            --set workloadIdentity.tenantId="${{ vars.AZURE_TENANT_ID }}" \
+            --set keyvault.name="${{ vars.KEY_VAULT_NAME }}" \
+            --set keyvault.vaultUri="${{ vars.KEY_VAULT_URI }}" \
+            --set ingress.host="${{ vars.INGRESS_HOST }}"
+
+      - name: Wait for API rollout
+        shell: bash
+        run: |
+          kubectl rollout status deployment/api \
+            --namespace "${{ steps.settings.outputs.namespace }}" \
+            --timeout=10m
+
+      - name: Deploy worker release
+        shell: bash
+        run: |
+          helm upgrade --install worker ./iac/helm/worker \
+            --namespace "${{ steps.settings.outputs.namespace }}" \
+            --create-namespace \
+            --atomic \
+            --wait \
+            --timeout 10m \
+            --set image.repository="${{ vars.ACR_LOGIN_SERVER }}/worker" \
+            --set image.tag="${{ steps.settings.outputs.image_tag }}" \
+            --set workloadIdentity.clientId="${{ vars.PROD_WORKER_MI_CLIENT_ID }}" \
+            --set workloadIdentity.tenantId="${{ vars.AZURE_TENANT_ID }}" \
+            --set keyvault.name="${{ vars.KEY_VAULT_NAME }}" \
+            --set serviceBus.namespace="${{ vars.SERVICEBUS_NAMESPACE }}"
+
+      - name: Check deployed resources
+        shell: bash
+        run: |
+          kubectl get deploy,svc,ingress,sa,secretproviderclass \
+            --namespace "${{ steps.settings.outputs.namespace }}"

@@ -5,7 +5,7 @@
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "main" {
-  name                = "kv-${var.prefix}"   # Max 24 chars
+  name                = "kv-${var.prefix}" # Max 24 chars
   location            = var.location
   resource_group_name = var.resource_group_name
   tenant_id           = data.azurerm_client_config.current.tenant_id
@@ -14,7 +14,7 @@ resource "azurerm_key_vault" "main" {
   # Soft delete: deleted secrets recoverable for 90 days.
   # WHY: Accidental deletion of a production secret shouldn't be catastrophic.
   soft_delete_retention_days = 90
-  purge_protection_enabled   = true   # Prevents force-purge during retention period
+  purge_protection_enabled   = true # Prevents force-purge during retention period
 
   # Disable public network access — Key Vault only reachable via private endpoint.
   public_network_access_enabled = false
@@ -24,9 +24,9 @@ resource "azurerm_key_vault" "main" {
   enable_rbac_authorization = true
 
   network_acls {
-    bypass         = "AzureServices"
-    default_action = "Deny"
-    ip_rules       = []   # No public IP access
+    bypass                     = "AzureServices"
+    default_action             = "Deny"
+    ip_rules                   = [] # No public IP access
     virtual_network_subnet_ids = []
   }
 
@@ -105,7 +105,7 @@ resource "azurerm_key_vault_secret" "storage_connection" {
 
 resource "random_password" "jwt_secret" {
   length  = 64
-  special = false   # JWT secrets work best with alphanumeric only
+  special = false # JWT secrets work best with alphanumeric only
 }
 
 resource "azurerm_key_vault_secret" "jwt_secret" {

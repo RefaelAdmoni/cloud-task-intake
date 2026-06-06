@@ -30,8 +30,8 @@ resource "azurerm_storage_account" "main" {
   # SAS tokens דורשים shared_access_key_enabled = true.
   shared_access_key_enabled = true
 
-  enable_https_traffic_only = true
-  min_tls_version           = "TLS1_2"
+  https_traffic_only_enabled = true
+  min_tls_version            = "TLS1_2"
 
   blob_properties {
     delete_retention_policy {
@@ -47,7 +47,7 @@ resource "azurerm_storage_account" "main" {
     cors_rule {
       allowed_headers    = ["*"]
       allowed_methods    = ["PUT", "HEAD"]
-      allowed_origins    = [var.allowed_origin]  # e.g. "https://app.example.com"
+      allowed_origins    = [var.allowed_origin] # e.g. "https://app.example.com"
       exposed_headers    = ["ETag"]
       max_age_in_seconds = 300
     }
@@ -59,7 +59,7 @@ resource "azurerm_storage_account" "main" {
 resource "azurerm_storage_container" "uploads" {
   name                  = "uploads"
   storage_account_name  = azurerm_storage_account.main.name
-  container_access_type = "private"   # אין anonymous access לcontainer
+  container_access_type = "private" # אין anonymous access לcontainer
 }
 
 # Lifecycle management policy

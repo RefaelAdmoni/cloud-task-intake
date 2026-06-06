@@ -25,7 +25,7 @@ const envSchema = z.object({
   LOCAL_STORAGE_PATH: z.string().default("./uploads"),
   PUBLIC_STORAGE_BASE_URL: z
     .string()
-    .default("http://localhost:3000/uploads"),
+    .default("http://localhost:3000/api/uploads"),
 
   // Azure Storage
   AZURE_STORAGE_ACCOUNT_NAME: z.string().optional(),

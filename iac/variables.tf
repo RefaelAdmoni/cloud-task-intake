@@ -113,6 +113,24 @@ variable "db_admin_login" {
   default     = "pgadmin"
 }
 
+variable "backup_retention_days" {
+  description = "Number of days to retain PostgreSQL backups."
+  type        = number
+  default     = 7
+}
+
+variable "high_availability_enabled" {
+  description = "Enable PostgreSQL Flexible Server high availability."
+  type        = bool
+  default     = false
+}
+
+variable "enable_geo_redundant_backup" {
+  description = "Enable geo-redundant backups for PostgreSQL Flexible Server."
+  type        = bool
+  default     = false
+}
+
 # ── Application ───────────────────────────────────────────────────────────────
 variable "custom_domain" {
   description = "Custom domain for Front Door (e.g. app.example.com)."

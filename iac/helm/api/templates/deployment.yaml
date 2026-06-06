@@ -32,7 +32,7 @@ spec:
         azure.workload.identity/use: "true"
       annotations:
         # Force pod restart when the secret version changes
-        checksum/secrets: {{ include (print $.Template.BasePath "/secretprovider.yaml") . | sha256sum }}
+        checksum/secrets: {{ include (print $.Template.BasePath "/service-hpa-sa.yaml") . | sha256sum }}
     spec:
       # WHY serviceAccountName: The SA is annotated with the MI client ID.
       # Without this, Workload Identity federation won't inject the token.

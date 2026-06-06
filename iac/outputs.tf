@@ -16,9 +16,19 @@ output "acr_login_server" {
   value       = module.acr.login_server
 }
 
+output "acr_name" {
+  description = "ACR resource name — used by GitHub Actions when requesting an ACR token"
+  value       = module.acr.acr_name
+}
+
 output "key_vault_uri" {
   description = "Key Vault URI — referenced by Secrets Store CSI Driver"
   value       = module.keyvault.vault_uri
+}
+
+output "key_vault_name" {
+  description = "Key Vault name — passed into the Helm chart SecretProviderClass"
+  value       = module.keyvault.vault_name
 }
 
 output "frontend_default_hostname" {
@@ -29,6 +39,11 @@ output "frontend_default_hostname" {
 output "frontdoor_endpoint_hostname" {
   description = "Azure Front Door endpoint hostname — set as Cloudflare CNAME target"
   value       = module.frontdoor.endpoint_hostname
+}
+
+output "app_hostname" {
+  description = "Application hostname used by the API ingress"
+  value       = var.custom_domain
 }
 
 output "servicebus_namespace" {

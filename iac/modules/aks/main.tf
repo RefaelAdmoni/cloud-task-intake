@@ -39,24 +39,24 @@ resource "azurerm_kubernetes_cluster" "main" {
   # Automatic channel: Azure handles patch-version upgrades automatically.
   # WHY 'patch' not 'rapid': patch only upgrades 1.29.x → 1.29.y (same minor),
   # which is safe. 'rapid' can upgrade minor versions unexpectedly.
-  automatic_upgrade_channel = "patch"
+  automatic_channel_upgrade = "patch"
 
   # System node pool — only Kubernetes system components run here.
   # Taint prevents application pods from landing here accidentally.
   default_node_pool {
-    name                 = "system"
-    node_count           = var.system_node_count
-    vm_size              = var.system_vm_size
-    vnet_subnet_id       = var.subnet_aks_id
-    os_disk_size_gb      = 100
-    os_disk_type         = "Managed"  # Managed = standard SSD; Ephemeral has size limits
-    type                 = "VirtualMachineScaleSets"
-    zones                = ["1", "2"]  # Spread across 2 AZs for zone-level HA
-    only_critical_addons_enabled = true  # Taint = CriticalAddonsOnly
+    name                         = "system"
+    node_count                   = var.system_node_count
+    vm_size                      = var.system_vm_size
+    vnet_subnet_id               = var.subnet_aks_id
+    os_disk_size_gb              = 100
+    os_disk_type                 = "Managed" # Managed = standard SSD; Ephemeral has size limits
+    type                         = "VirtualMachineScaleSets"
+    zones                        = ["1", "2"] # Spread across 2 AZs for zone-level HA
+    only_critical_addons_enabled = true       # Taint = CriticalAddonsOnly
 
 
     upgrade_settings {
-      max_surge = "33%"   # Allow 33% extra nodes during upgrade (rolling, no downtime)
+      max_surge = "33%" # Allow 33% extra nodes during upgrade (rolling, no downtime)
     }
   }
 
@@ -69,8 +69,8 @@ resource "azurerm_kubernetes_cluster" "main" {
   }
 
   network_profile {
-    network_plugin    = "azure"   # Azure CNI: pods get real VNet IPs
-    network_policy    = "calico"  # Calico enforces Kubernetes NetworkPolicy objects
+    network_plugin    = "azure"  # Azure CNI: pods get real VNet IPs
+    network_policy    = "calico" # Calico enforces Kubernetes NetworkPolicy objects
     load_balancer_sku = "standard"
     outbound_type     = "loadBalancer"
     service_cidr      = "10.1.0.0/16"
@@ -86,10 +86,10 @@ resource "azurerm_kubernetes_cluster" "main" {
   # WHY: This is how pods get secrets without env vars or Kubernetes Secrets.
   key_vault_secrets_provider {
     secret_rotation_enabled  = true
-    secret_rotation_interval = "2m"   # Re-sync every 2 minutes
+    secret_rotation_interval = "2m" # Re-sync every 2 minutes
   }
 
-  azure_policy_enabled = true   # Enforces Azure Policy (e.g. block privileged containers)
+  azure_policy_enabled = true # Enforces Azure Policy (e.g. block privileged containers)
 
   tags = var.tags
 
@@ -114,7 +114,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "user" {
   zones                 = ["1", "2"]
 
   # Cluster Autoscaler — scales node count based on pending pods.
-  auto_scaling_enabled = true
+  enable_auto_scaling = true
   min_count           = var.user_node_min
   max_count           = var.user_node_max
 

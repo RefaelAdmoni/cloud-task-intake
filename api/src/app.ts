@@ -23,6 +23,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
 
+  // Accept raw binary uploads for the local storage fallback route.
+  app.addContentTypeParser(
+    "*",
+    { parseAs: "buffer" },
+    (_req, body, done) => done(null, body)
+  );
+
   // Register plugins
   await app.register(cors, {
     origin: config.CORS_ORIGIN,
@@ -39,12 +46,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Public routes
   await app.register(healthRoutes);
   await app.register(authRoutes, { prefix: "/api" });
+  await app.register(uploadRoutes, { prefix: "/api" });
 
   // Protected routes — apply requireAuth as a scoped hook
   await app.register(async (protectedApp) => {
     protectedApp.addHook("preHandler", requireAuth);
     await protectedApp.register(taskRoutes, { prefix: "/api" });
-    await protectedApp.register(uploadRoutes, { prefix: "/api" });
   });
 
   return app;

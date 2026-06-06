@@ -30,8 +30,10 @@ async function seed(): Promise<void> {
   for (const task of SEED_TASKS) {
     await pool.query(
       `INSERT INTO tasks (id, title, description, status)
-       VALUES ($1, $2, $3, 'pending')
-       ON CONFLICT (id) DO NOTHING`,
+       SELECT $1, $2, $3, 'pending'
+       WHERE NOT EXISTS (
+         SELECT 1 FROM tasks WHERE title = $2
+       )`,
       [uuidv4(), task.title, task.description]
     );
   }
@@ -51,9 +53,11 @@ async function seed(): Promise<void> {
   console.log("[seed] Admin user ready (email: admin@example.com).");
 }
 
-seed()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error("[seed] Error:", err);
-    process.exit(1);
-  });
+if (require.main === module) {
+  seed()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error("[seed] Error:", err);
+      process.exit(1);
+    });
+}

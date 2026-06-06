@@ -1,12 +1,23 @@
 {
+  "private": true,
+  "workspaces": [
+    "api",
+    "worker",
+    "frontend"
+  ],
   "dependencies": {
-    "fastify": "^5.8.5"
+    "@openai/codex": "^0.137.0"
   },
   "devDependencies": {
-    "vitest": "^4.1.8",
-    "eslint": "^8.0.0"
+    "eslint": "^8.0.0",
+    "vitest": "^4.1.8"
   },
   "scripts": {
+    "build": "npm run build --workspace api && npm run build --workspace worker && npm run build --workspace frontend",
+    "build:api": "npm run build --workspace api",
+    "build:worker": "npm run build --workspace worker",
+    "build:frontend": "npm run build --workspace frontend",
+    "test:api": "npm test --workspace api",
     "lint": "eslint './apps/**/*.{ts,tsx}'"
   }
 }

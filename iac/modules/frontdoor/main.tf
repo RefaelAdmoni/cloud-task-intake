@@ -16,7 +16,7 @@ resource "azurerm_cdn_frontdoor_firewall_policy" "main" {
   name                = "waf${replace(var.prefix, "-", "")}"
   resource_group_name = var.resource_group_name
   sku_name            = "Premium_AzureFrontDoor"
-  mode                = "Prevention"   # Block, not just detect
+  mode                = "Prevention" # Block, not just detect
   tags                = var.tags
 
   managed_rule {
@@ -58,16 +58,16 @@ resource "azurerm_cdn_frontdoor_origin_group" "api" {
 }
 
 resource "azurerm_cdn_frontdoor_origin" "api" {
-  name                          = "origin-api"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
-  enabled                       = true
-  host_name                     = var.aks_ingress_hostname
-  origin_host_header            = var.custom_domain
-  http_port                     = 80
-  https_port                    = 443
+  name                           = "origin-api"
+  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.api.id
+  enabled                        = true
+  host_name                      = var.aks_ingress_hostname
+  origin_host_header             = var.custom_domain
+  http_port                      = 80
+  https_port                     = 443
   certificate_name_check_enabled = true
-  priority                      = 1
-  weight                        = 1000
+  priority                       = 1
+  weight                         = 1000
 }
 
 # Origin group — SWA (frontend)
@@ -89,16 +89,16 @@ resource "azurerm_cdn_frontdoor_origin_group" "swa" {
 }
 
 resource "azurerm_cdn_frontdoor_origin" "swa" {
-  name                          = "origin-swa"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.swa.id
-  enabled                       = true
-  host_name                     = var.swa_hostname
-  origin_host_header            = var.swa_hostname
-  http_port                     = 80
-  https_port                    = 443
+  name                           = "origin-swa"
+  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.swa.id
+  enabled                        = true
+  host_name                      = var.swa_hostname
+  origin_host_header             = var.swa_hostname
+  http_port                      = 80
+  https_port                     = 443
   certificate_name_check_enabled = true
-  priority                      = 1
-  weight                        = 1000
+  priority                       = 1
+  weight                         = 1000
 }
 
 # Custom domain

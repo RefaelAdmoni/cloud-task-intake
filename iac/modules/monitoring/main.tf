@@ -2,20 +2,11 @@
 # Module: monitoring — Log Analytics, Container Insights, Alerts, Grafana
 ###############################################################################
 
-resource "azurerm_log_analytics_workspace" "main" {
-  name                = "law-${var.prefix}"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  sku                 = "PerGB2018"
-  retention_in_days   = 90
-  tags                = var.tags
-}
-
 # Container Insights — sends AKS pod logs and metrics to Log Analytics
 resource "azurerm_monitor_diagnostic_setting" "aks" {
   name                       = "diag-aks-${var.prefix}"
   target_resource_id         = var.aks_cluster_id
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
 
   enabled_log { category = "kube-apiserver" }
   enabled_log { category = "kube-controller-manager" }

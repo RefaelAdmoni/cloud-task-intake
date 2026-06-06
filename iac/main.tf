@@ -20,26 +20,23 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.0"
-    }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.31"
-    }
   }
 
   # Remote state: stored in Azure Blob Storage.
   # WHY: Never store .tfstate locally or in Git — it contains plaintext secrets.
   # Blob lease provides distributed locking so two engineers can't apply simultaneously.
-  backend "azurerm" {
-    resource_group_name  = "rg-tfstate-shared"
-    storage_account_name = "stcloudtasktfstate"   # must be globally unique
-    container_name       = "tfstate"
-    key                  = "cloudtask/prod.terraform.tfstate"
-    # Authentication via ARM_* env vars or az CLI — no static credentials here.
+  #  backend "azurerm" {
+  #    resource_group_name  = "rg-tfstate-shared"
+  #    storage_account_name = "stcloudtasktfstate"   # must be globally unique
+  #    container_name       = "tfstate"
+  #    key                  = "cloudtask/prod.terraform.tfstate"
+  #    # Authentication via ARM_* env vars or az CLI — no static credentials here.
+  #  }
+
+  backend "local" {
+    path = "terraform.tfstate"
   }
+
 }
 
 ###############################################################################
@@ -47,6 +44,12 @@ terraform {
 ###############################################################################
 
 provider "azurerm" {
+  # The current principal does not have subscription-level permission to
+  # auto-register Azure Resource Providers during plan/apply.
+  # Keep registration explicit/out-of-band and let Terraform work only with
+  # already-registered providers.
+  resource_provider_registrations = "none"
+
   features {
     key_vault {
       # Ensure soft-deleted keys/secrets are purged on destroy (useful for CI).
@@ -61,24 +64,6 @@ provider "azurerm" {
 }
 
 provider "azuread" {}
-
-# Helm + Kubernetes providers are configured AFTER AKS is created,
-# using the cluster's kubeconfig output. This avoids chicken-and-egg issues.
-provider "helm" {
-  kubernetes {
-    host                   = module.aks.kube_config.host
-    client_certificate     = base64decode(module.aks.kube_config.client_certificate)
-    client_key             = base64decode(module.aks.kube_config.client_key)
-    cluster_ca_certificate = base64decode(module.aks.kube_config.cluster_ca_certificate)
-  }
-}
-
-provider "kubernetes" {
-  host                   = module.aks.kube_config.host
-  client_certificate     = base64decode(module.aks.kube_config.client_certificate)
-  client_key             = base64decode(module.aks.kube_config.client_key)
-  cluster_ca_certificate = base64decode(module.aks.kube_config.cluster_ca_certificate)
-}
 
 ###############################################################################
 # Resource Group
@@ -121,10 +106,10 @@ module "networking" {
   prefix              = local.prefix
   tags                = local.common_tags
 
-  vnet_address_space      = var.vnet_address_space
-  subnet_aks_cidr         = var.subnet_aks_cidr
-  subnet_data_cidr        = var.subnet_data_cidr
-  subnet_endpoints_cidr   = var.subnet_endpoints_cidr
+  vnet_address_space    = var.vnet_address_space
+  subnet_aks_cidr       = var.subnet_aks_cidr
+  subnet_data_cidr      = var.subnet_data_cidr
+  subnet_endpoints_cidr = var.subnet_endpoints_cidr
 }
 
 module "acr" {
@@ -135,8 +120,8 @@ module "acr" {
   prefix              = local.prefix
   tags                = local.common_tags
 
-  subnet_endpoints_id  = module.networking.subnet_endpoints_id
-  vnet_id              = module.networking.vnet_id
+  subnet_endpoints_id     = module.networking.subnet_endpoints_id
+  vnet_id                 = module.networking.vnet_id
   acr_private_dns_zone_id = module.networking.acr_private_dns_zone_id
 }
 
@@ -186,9 +171,9 @@ module "database" {
   db_storage_mb               = var.db_storage_mb
   db_name                     = var.db_name
   db_admin_login              = var.db_admin_login
-  high_availability_enabled    = var.high_availability_enabled
-  enable_geo_redundant_backup = var.enable_geo_redundant_backup
   backup_retention_days       = var.backup_retention_days
+  high_availability_enabled   = var.high_availability_enabled
+  enable_geo_redundant_backup = var.enable_geo_redundant_backup
 }
 
 module "messaging" {
@@ -199,8 +184,8 @@ module "messaging" {
   prefix              = local.prefix
   tags                = local.common_tags
 
-  subnet_endpoints_id  = module.networking.subnet_endpoints_id
-  vnet_id              = module.networking.vnet_id
+  subnet_endpoints_id    = module.networking.subnet_endpoints_id
+  vnet_id                = module.networking.vnet_id
   api_mi_principal_id    = module.aks.api_mi_principal_id
   worker_mi_principal_id = module.aks.worker_mi_principal_id
 }
@@ -243,9 +228,9 @@ module "keyvault" {
 module "frontdoor" {
   source = "./modules/frontdoor"
 
-  resource_group_name  = azurerm_resource_group.main.name
-  prefix               = local.prefix
-  tags                 = local.common_tags
+  resource_group_name = azurerm_resource_group.main.name
+  prefix              = local.prefix
+  tags                = local.common_tags
 
   swa_hostname         = module.swa.default_hostname
   aks_ingress_hostname = module.aks.nginx_ingress_private_ip
@@ -260,8 +245,9 @@ module "monitoring" {
   prefix              = local.prefix
   tags                = local.common_tags
 
-  aks_cluster_id      = module.aks.cluster_id
-  alert_email         = var.alert_email
+  aks_cluster_id             = module.aks.cluster_id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.bootstrap.id
+  alert_email                = var.alert_email
 }
 
 module "swa" {
@@ -297,7 +283,7 @@ resource "azurerm_federated_identity_credential" "github_actions" {
   audience            = ["api://AzureADTokenExchange"]
   issuer              = "https://token.actions.githubusercontent.com"
   # subject מגביל לבקשות מ-main branch בלבד
-  subject             = "repo:RefaelAdmoni/cloud-task-intake:ref:refs/heads/main"
+  subject = "repo:RefaelAdmoni/cloud-task-intake:ref:refs/heads/main"
 }
 
 # Federated credential נוסף — ל-hotfix branches
@@ -322,6 +308,17 @@ resource "azurerm_role_assignment" "gha_acr_push" {
 resource "azurerm_role_assignment" "gha_aks_user" {
   scope                = module.aks.cluster_id
   role_definition_name = "Azure Kubernetes Service Cluster User Role"
+  principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
+
+  depends_on = [azurerm_user_assigned_identity.github_actions]
+}
+
+# GHA -> AKS: Cluster Admin — required for helm upgrades with admin kubeconfig.
+# WHY admin here: the cluster is not configured with Azure RBAC write mappings for
+# this identity, so the most reliable CI/CD path is `az aks get-credentials --admin`.
+resource "azurerm_role_assignment" "gha_aks_admin" {
+  scope                = module.aks.cluster_id
+  role_definition_name = "Azure Kubernetes Service Cluster Admin Role"
   principal_id         = azurerm_user_assigned_identity.github_actions.principal_id
 
   depends_on = [azurerm_user_assigned_identity.github_actions]

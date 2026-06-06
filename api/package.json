@@ -29,6 +29,7 @@
     "@types/node": "^20.14.2",
     "@types/pg": "^8.11.6",
     "@types/uuid": "^9.0.8",
+    "pino-pretty": "^11.2.2",
     "tsx": "^4.15.6",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"

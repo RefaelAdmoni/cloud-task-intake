@@ -172,14 +172,22 @@ export class TaskWorker {
 
   constructor() {
     this.pool = new Pool({ connectionString: config.DATABASE_URL });
+    this.queue = this.createQueueProvider();
+  }
 
-    if (config.QUEUE_PROVIDER === "redis") {
-      if (!config.REDIS_URL) {
-        throw new Error("REDIS_URL is required when QUEUE_PROVIDER=redis");
-      }
-      this.queue = new RedisQueueProvider(config.REDIS_URL);
-    } else {
-      this.queue = new MemoryQueueProvider();
+  private createQueueProvider(): QueueProvider {
+    switch (config.QUEUE_PROVIDER) {
+      case "memory":
+        return new MemoryQueueProvider();
+      case "redis":
+        if (!config.REDIS_URL) {
+          throw new Error("REDIS_URL is required when QUEUE_PROVIDER=redis");
+        }
+        return new RedisQueueProvider(config.REDIS_URL);
+      default:
+        throw new Error(
+          `QUEUE_PROVIDER=${config.QUEUE_PROVIDER} is not implemented in the worker yet`
+        );
     }
   }
 

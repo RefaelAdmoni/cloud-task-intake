@@ -19,15 +19,18 @@ resource "azurerm_postgresql_flexible_server" "main" {
   administrator_login    = var.db_admin_login
   administrator_password = random_password.db.result
 
-  sku_name   = var.db_sku       # e.g. "GP_Standard_D2s_v3"
+  sku_name   = var.db_sku # e.g. "GP_Standard_D2s_v3"
   storage_mb = var.db_storage_mb
   version    = "15"
 
   # Zone-Redundant HA: standby replica in a different AZ.
   # Failover is automatic (~60s). RPO = 0 (synchronous replication).
-  high_availability {
-    mode                      = "ZoneRedundant"
-    standby_availability_zone = "2"
+  dynamic "high_availability" {
+    for_each = var.high_availability_enabled ? [1] : []
+    content {
+      mode                      = "ZoneRedundant"
+      standby_availability_zone = "2"
+    }
   }
 
   # Maintenance window: Sunday 03:00 UTC — lowest traffic window.
@@ -46,15 +49,13 @@ resource "azurerm_postgresql_flexible_server" "main" {
 
   # Geo-redundant backup: stores backups in a paired region.
   # Useful if we ever need to restore into a DR region.
-  geo_redundant_backup_enabled = true
-  backup_retention_days        = 35  # Maximum retention (default is 7)
+  geo_redundant_backup_enabled = var.enable_geo_redundant_backup
+  backup_retention_days        = var.backup_retention_days
 
   tags = var.tags
 
-  depends_on = [var.private_dns_zone_id]
-
   lifecycle {
-    prevent_destroy = true   # Extra guard — losing prod DB is catastrophic
+    prevent_destroy = true # Extra guard — losing prod DB is catastrophic
   }
 }
 
