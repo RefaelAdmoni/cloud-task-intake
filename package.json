@@ -7,6 +7,6 @@
     "eslint": "^8.0.0"
   },
   "scripts": {
-    "lint": "eslint 'src/**/*.{ts,tsx}'",
+    "lint": "eslint 'app/src/**/*.{ts,tsx}'"
   }
 }
