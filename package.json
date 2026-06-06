@@ -5,4 +5,7 @@
   "devDependencies": {
     "vitest": "^4.1.8"
   }
+  scripts: {
+    "lint": "eslint ."
+  }
 }
