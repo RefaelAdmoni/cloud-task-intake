@@ -1,0 +1,24 @@
+###############################################################################
+# helm/api/values.yaml — default values (overridden by CI/CD --set flags)
+###############################################################################
+
+image:
+  repository: acrcloudtaskprod.azurecr.io/api
+  tag: latest-main     # Overridden by CI with sha-<git_sha>
+
+replicaCount: 2        # Minimum — HPA manages the rest
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 10
+
+workloadIdentity:
+  clientId: ""         # Set via --set in CI/CD from terraform output
+  tenantId: ""         # Set via --set in CI/CD
+
+keyvault:
+  name: ""             # e.g. kv-cloudtask-prod
+  vaultUri: ""         # e.g. https://kv-cloudtask-prod.vault.azure.net/
+
+ingress:
+  host: "app.example.com"

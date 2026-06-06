@@ -1,0 +1,123 @@
+###############################################################################
+# helm/worker/templates/deployment.yaml
+###############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: {{ .Release.Namespace }}
+spec:
+  # WHY replicas: 0 initial — KEDA manages the count based on queue depth.
+  # When queue is empty, KEDA can scale to 0 (saving costs).
+  replicas: 0
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: sa-worker
+      nodeSelector:
+        workload: application
+      containers:
+        - name: worker
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: Always
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: SERVICEBUS_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: servicebus-connection-string
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: db-connection-string
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets"
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: azure-kv-secrets
+      terminationGracePeriodSeconds: 120   # Workers need more time to finish jobs
+---
+###############################################################################
+# helm/worker/templates/serviceaccount.yaml
+###############################################################################
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-worker
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    azure.workload.identity/client-id: {{ .Values.workloadIdentity.clientId | quote }}
+---
+###############################################################################
+# helm/worker/templates/scaledobject.yaml
+# KEDA ScaledObject — scales worker replicas based on Service Bus queue depth
+#
+# WHY KEDA instead of HPA:
+# HPA scales on CPU/memory. A worker sitting idle uses very little CPU even
+# when there are 1000 messages queued. KEDA scales on the actual business
+# metric — queue depth — so we get exactly the right number of workers.
+###############################################################################
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-scaledobject
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    name: worker
+  minReplicaCount: {{ .Values.keda.minReplicas }}   # 0 = scale to zero when idle
+  maxReplicaCount: {{ .Values.keda.maxReplicas }}
+  pollingInterval: 15    # Check queue depth every 15 seconds
+  cooldownPeriod: 60     # Wait 60s before scaling down after queue is empty
+  triggers:
+    - type: azure-servicebus
+      metadata:
+        queueName: tasks
+        namespace: {{ .Values.serviceBus.namespace | quote }}
+        messageCount: "5"  # Target: 1 worker pod per 5 messages in queue
+        # WHY messageCount: 5 — each worker processes ~1 msg/sec. 5 msgs/worker
+        # means max processing delay is ~5 seconds. Tune based on job duration.
+      authenticationRef:
+        name: keda-sb-auth
+---
+###############################################################################
+# KEDA TriggerAuthentication — uses Workload Identity, no static secrets
+###############################################################################
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-sb-auth
+  namespace: {{ .Release.Namespace }}
+spec:
+  podIdentity:
+    provider: azure-workload
+    identityId: {{ .Values.workloadIdentity.clientId | quote }}

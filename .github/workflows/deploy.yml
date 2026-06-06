@@ -1,0 +1,488 @@
+###############################################################################
+# .github/workflows/deploy.yml
+#
+# Fires ONLY on push to main OR push to hotfix/* OR push to release/*.
+# Each branch type gets a different pipeline path.
+#
+# ┌─────────────────────────────────────────────────────────────┐
+# │ main     → test → build+scan(ALL severities) → staging → prod(✋) │
+# │ hotfix/* → test → build+scan(CRITICAL only)  → prod direct(✋)    │
+# │ release/*→ test → build+scan(HIGH+CRITICAL)  → staging → prod(✋✋)│
+# └─────────────────────────────────────────────────────────────┘
+###############################################################################
+
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - hotfix/**
+      - release/**
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+
+env:
+  IMAGE_TAG: sha-${{ github.sha }}
+  BRANCH: ${{ github.ref_name }}
+
+###############################################################################
+# JOB 1 — Unit + Integration (same as CI, repeated here so deploy is
+# self-contained and doesn't depend on a previous CI run that may be stale)
+###############################################################################
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:unit
+      - run: npm run db:migrate
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+          NODE_ENV: test
+      - run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+          NODE_ENV: test
+          JWT_SECRET: ci-only
+
+  ###########################################################################
+  # JOB 2 — Build Docker images + Full Security Scan
+  #
+  # This is the critical job that runs AFTER tests pass.
+  # Three stages inside this job:
+  #   a) hadolint      — Dockerfile best practices
+  #   b) docker build  — build the image (not pushed yet)
+  #   c) trivy fs      — scan SOURCE for secrets and CVEs
+  #   d) trivy image   — scan the BUILT IMAGE for OS + app CVEs
+  #   e) docker push   — only if ALL scans pass
+  #
+  # WHY scan the image separately from the source?
+  # The source might use `axios@1.6.8` (clean) but the base image
+  # `node:20-alpine` might have an OS package with a CVE. Source scan
+  # doesn't catch OS packages. Image scan catches both.
+  #
+  # SEVERITY THRESHOLDS differ per branch:
+  #   main    → fail on CRITICAL + HIGH (strictest)
+  #   hotfix  → fail on CRITICAL only (we're in a fire, be practical)
+  #   release → fail on CRITICAL + HIGH (same as main)
+  ###########################################################################
+  build-and-scan:
+    name: Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Determine severity threshold based on branch ──────────────────────
+      - name: Set scan severity
+        id: severity
+        run: |
+          if [[ "${{ env.BRANCH }}" == hotfix/* ]]; then
+            echo "level=CRITICAL" >> $GITHUB_OUTPUT
+            echo "exit_code=1" >> $GITHUB_OUTPUT
+          else
+            echo "level=CRITICAL,HIGH" >> $GITHUB_OUTPUT
+            echo "exit_code=1" >> $GITHUB_OUTPUT
+          fi
+
+      # ── a) Dockerfile lint ────────────────────────────────────────────────
+      - name: hadolint — API Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: apps/api/Dockerfile
+          failure-threshold: error
+
+      - name: hadolint — Worker Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: apps/worker/Dockerfile
+          failure-threshold: error
+
+      # ── Azure login (needed for ACR push at the end) ──────────────────────
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # ── b) Build images (no push yet) ─────────────────────────────────────
+      - name: Build API image (local)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/api
+          load: true            # load into local docker daemon, no push
+          tags: api:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Worker image (local)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/worker
+          load: true
+          tags: worker:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── c) Trivy — scan source for secrets ───────────────────────────────
+      # WHY scan source for secrets even though we also scan the image?
+      # A secret in source code is a build-time risk (e.g. .env committed).
+      # A secret in the image is a runtime risk (e.g. baked into a layer).
+      # Both must be caught. Source scan is faster (~10s) and catches the
+      # former before we even bother building.
+      - name: Trivy — secret scan (source)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          scanners: "secret"
+          exit-code: "1"
+          format: "table"
+
+      # ── d) Trivy — scan BUILT IMAGE for CVEs ─────────────────────────────
+      # This catches:
+      #   - CVEs in OS packages (Alpine apk)
+      #   - CVEs in npm packages (node_modules inside the image)
+      #   - Secrets accidentally baked into image layers
+      #
+      # Severity threshold is branch-dependent (set above).
+      - name: Trivy — image CVE scan (API)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "image"
+          image-ref: "api:${{ env.IMAGE_TAG }}"
+          scanners: "vuln,secret"
+          severity: ${{ steps.severity.outputs.level }}
+          exit-code: ${{ steps.severity.outputs.exit_code }}
+          format: "sarif"
+          output: "trivy-api.sarif"
+
+      - name: Trivy — image CVE scan (Worker)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "image"
+          image-ref: "worker:${{ env.IMAGE_TAG }}"
+          scanners: "vuln,secret"
+          severity: ${{ steps.severity.outputs.level }}
+          exit-code: ${{ steps.severity.outputs.exit_code }}
+          format: "sarif"
+          output: "trivy-worker.sarif"
+
+      # Always upload results — even on failure — so the Security tab shows what was found.
+      - name: Upload scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "."    # uploads all *.sarif files in the directory
+
+      # ── e) Push to ACR — only if ALL scans passed ─────────────────────────
+      - name: ACR Login
+        run: az acr login --name ${{ vars.ACR_LOGIN_SERVER }}
+
+      - name: Push API to ACR
+        run: |
+          docker tag api:${{ env.IMAGE_TAG }} \
+            ${{ vars.ACR_LOGIN_SERVER }}/api:${{ env.IMAGE_TAG }}
+          docker push ${{ vars.ACR_LOGIN_SERVER }}/api:${{ env.IMAGE_TAG }}
+
+      - name: Push Worker to ACR
+        run: |
+          docker tag worker:${{ env.IMAGE_TAG }} \
+            ${{ vars.ACR_LOGIN_SERVER }}/worker:${{ env.IMAGE_TAG }}
+          docker push ${{ vars.ACR_LOGIN_SERVER }}/worker:${{ env.IMAGE_TAG }}
+
+  ###########################################################################
+  # JOB 3a — Deploy to Staging
+  # Runs for: main, release/*
+  # Skipped for: hotfix/* (goes directly to prod)
+  ###########################################################################
+  deploy-staging:
+    name: Deploy → Staging
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    if: >
+      github.ref_name == 'main' ||
+      startsWith(github.ref_name, 'release/')
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials (staging)
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ vars.AKS_STAGING_RESOURCE_GROUP }} \
+            --name ${{ vars.AKS_STAGING_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - uses: azure/setup-helm@v4
+        with: { version: "3.15.0" }
+
+      - name: Helm deploy → staging
+        run: |
+          helm upgrade --install api ./helm/api \
+            --namespace default \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.repository=${{ vars.ACR_LOGIN_SERVER }}/api \
+            --set keyvault.vaultUri=${{ vars.STAGING_KEY_VAULT_URI }} \
+            --set workloadIdentity.clientId=${{ vars.STAGING_API_MI_CLIENT_ID }} \
+            --set workloadIdentity.tenantId=${{ secrets.AZURE_TENANT_ID }} \
+            --atomic --timeout 5m --wait
+
+          helm upgrade --install worker ./helm/worker \
+            --namespace default \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.repository=${{ vars.ACR_LOGIN_SERVER }}/worker \
+            --set keyvault.vaultUri=${{ vars.STAGING_KEY_VAULT_URI }} \
+            --set workloadIdentity.clientId=${{ vars.STAGING_WORKER_MI_CLIENT_ID }} \
+            --set workloadIdentity.tenantId=${{ secrets.AZURE_TENANT_ID }} \
+            --atomic --timeout 5m --wait
+
+  ###########################################################################
+  # JOB 4 — E2E Tests (staging)
+  # Only after staging deploy succeeds, and only for main/release
+  ###########################################################################
+  e2e-staging:
+    name: E2E Tests (Staging)
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: >
+      github.ref_name == 'main' ||
+      startsWith(github.ref_name, 'release/')
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: E2E tests against staging
+        run: npm run test:e2e
+        env:
+          BASE_URL: https://${{ vars.STAGING_DOMAIN }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ env.IMAGE_TAG }}
+          path: playwright-report/
+          retention-days: 7
+
+  ###########################################################################
+  # JOB 5a — Deploy to Production (main branch)
+  # Requires: e2e passed + manual approval
+  ###########################################################################
+  deploy-prod-main:
+    name: Deploy → Production (main) ✋
+    runs-on: ubuntu-latest
+    needs: e2e-staging
+    if: github.ref_name == 'main'
+    environment: production    # 1 required reviewer in GitHub settings
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials (prod)
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ vars.AKS_RESOURCE_GROUP }} \
+            --name ${{ vars.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - uses: azure/setup-helm@v4
+        with: { version: "3.15.0" }
+
+      - name: Helm deploy → production
+        run: |
+          helm upgrade --install api ./helm/api \
+            --namespace default \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.repository=${{ vars.ACR_LOGIN_SERVER }}/api \
+            --set keyvault.vaultUri=${{ vars.KEY_VAULT_URI }} \
+            --set workloadIdentity.clientId=${{ vars.PROD_API_MI_CLIENT_ID }} \
+            --set workloadIdentity.tenantId=${{ secrets.AZURE_TENANT_ID }} \
+            --atomic --timeout 5m --wait
+
+          helm upgrade --install worker ./helm/worker \
+            --namespace default \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.repository=${{ vars.ACR_LOGIN_SERVER }}/worker \
+            --set keyvault.vaultUri=${{ vars.KEY_VAULT_URI }} \
+            --set workloadIdentity.clientId=${{ vars.PROD_WORKER_MI_CLIENT_ID }} \
+            --set workloadIdentity.tenantId=${{ secrets.AZURE_TENANT_ID }} \
+            --atomic --timeout 5m --wait
+
+      - name: Smoke test
+        run: |
+          sleep 15
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            "https://${{ vars.CUSTOM_DOMAIN }}/api/health")
+          [ "$STATUS" = "200" ] || \
+            { helm rollback api 0 --wait; helm rollback worker 0 --wait; exit 1; }
+          echo "✅ Production healthy — ${{ env.IMAGE_TAG }}"
+
+  ###########################################################################
+  # JOB 5b — Deploy to Production (release branch)
+  # Requires: e2e passed + 2 required reviewers (stricter)
+  ###########################################################################
+  deploy-prod-release:
+    name: Deploy → Production (release) ✋✋
+    runs-on: ubuntu-latest
+    needs: e2e-staging
+    if: startsWith(github.ref_name, 'release/')
+    environment: production-release    # 2 required reviewers in GitHub settings
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials (prod)
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ vars.AKS_RESOURCE_GROUP }} \
+            --name ${{ vars.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - uses: azure/setup-helm@v4
+        with: { version: "3.15.0" }
+
+      - name: Helm deploy → production
+        run: |
+          helm upgrade --install api ./helm/api \
+            --namespace default \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.repository=${{ vars.ACR_LOGIN_SERVER }}/api \
+            --set keyvault.vaultUri=${{ vars.KEY_VAULT_URI }} \
+            --set workloadIdentity.clientId=${{ vars.PROD_API_MI_CLIENT_ID }} \
+            --set workloadIdentity.tenantId=${{ secrets.AZURE_TENANT_ID }} \
+            --atomic --timeout 5m --wait
+
+          helm upgrade --install worker ./helm/worker \
+            --namespace default \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.repository=${{ vars.ACR_LOGIN_SERVER }}/worker \
+            --set keyvault.vaultUri=${{ vars.KEY_VAULT_URI }} \
+            --set workloadIdentity.clientId=${{ vars.PROD_WORKER_MI_CLIENT_ID }} \
+            --set workloadIdentity.tenantId=${{ secrets.AZURE_TENANT_ID }} \
+            --atomic --timeout 5m --wait
+
+      - name: Smoke test
+        run: |
+          sleep 15
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            "https://${{ vars.CUSTOM_DOMAIN }}/api/health")
+          [ "$STATUS" = "200" ] || \
+            { helm rollback api 0 --wait; helm rollback worker 0 --wait; exit 1; }
+
+  ###########################################################################
+  # JOB 5c — Hotfix: deploy DIRECTLY to production (skip staging)
+  # Reasoning: hotfix is a surgical fix for a live production bug.
+  # Staging is irrelevant — the bug is already in prod. We test with
+  # unit tests and CRITICAL-only scan, then go straight to prod.
+  # WHY skip E2E: takes 5-10 min. A production outage can't wait.
+  ###########################################################################
+  deploy-prod-hotfix:
+    name: Deploy → Production (hotfix) ✋
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    if: startsWith(github.ref_name, 'hotfix/')
+    environment: production-hotfix    # 1 reviewer, no wait timer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Notify on-call — hotfix starting
+        run: |
+          echo "::warning::🚨 Hotfix deploy initiated: ${{ env.BRANCH }} → production"
+          # curl -X POST ${{ secrets.PAGERDUTY_WEBHOOK }} \
+          #   -d '{"summary":"Hotfix deploy started","severity":"warning"}'
+
+      - name: Get AKS credentials (prod)
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ vars.AKS_RESOURCE_GROUP }} \
+            --name ${{ vars.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - uses: azure/setup-helm@v4
+        with: { version: "3.15.0" }
+
+      - name: Helm deploy → production (hotfix)
+        run: |
+          helm upgrade --install api ./helm/api \
+            --namespace default \
+            --set image.tag=${{ env.IMAGE_TAG }} \
+            --set image.repository=${{ vars.ACR_LOGIN_SERVER }}/api \
+            --set keyvault.vaultUri=${{ vars.KEY_VAULT_URI }} \
+            --set workloadIdentity.clientId=${{ vars.PROD_API_MI_CLIENT_ID }} \
+            --set workloadIdentity.tenantId=${{ secrets.AZURE_TENANT_ID }} \
+            --atomic --timeout 3m --wait
+
+      - name: Smoke test
+        run: |
+          sleep 10
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+            "https://${{ vars.CUSTOM_DOMAIN }}/api/health")
+          [ "$STATUS" = "200" ] || \
+            { helm rollback api 0 --wait; exit 1; }
+          echo "✅ Hotfix deployed — ${{ env.IMAGE_TAG }}"
+
+      - name: Notify on-call — hotfix complete
+        if: success()
+        run: |
+          echo "::notice::✅ Hotfix deployed successfully"

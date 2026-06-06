@@ -1,0 +1,145 @@
+###############################################################################
+# helm/api/templates/deployment.yaml
+# Kubernetes Deployment for the Fastify API
+###############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: api
+    version: {{ .Values.image.tag | quote }}
+spec:
+  # WHY no replicas here: HPA manages replica count. Setting it here would
+  # conflict with HPA and cause a "flapping" effect on every helm upgrade.
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0    # Never take pods down before new ones are ready
+      maxSurge: 1          # Spin up 1 extra pod during the update
+  template:
+    metadata:
+      labels:
+        app: api
+        version: {{ .Values.image.tag | quote }}
+        # WHY this annotation: Azure Workload Identity webhook injects the
+        # federated token volume only when this label is present.
+        azure.workload.identity/use: "true"
+      annotations:
+        # Force pod restart when the secret version changes
+        checksum/secrets: {{ include (print $.Template.BasePath "/secretprovider.yaml") . | sha256sum }}
+    spec:
+      # WHY serviceAccountName: The SA is annotated with the MI client ID.
+      # Without this, Workload Identity federation won't inject the token.
+      serviceAccountName: sa-api
+
+      # Spread pods across AZs for zone-level HA
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: api
+
+      # Ensure pods land on user node pool, not system pool
+      nodeSelector:
+        workload: application
+
+      containers:
+        - name: api
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            # Secrets are mounted as files by the CSI driver and exposed as env vars
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: db-connection-string
+            - name: SERVICEBUS_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: servicebus-connection-string
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: jwt-secret
+            - name: STORAGE_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: storage-connection-string
+            - name: AZURE_STORAGE_CONTAINER
+              value: "uploads"
+
+          # WHY readinessProbe: Pod only receives traffic when it's actually ready.
+          # Without this, rolling deploys can send traffic to a pod that hasn't
+          # finished starting up (DB migrations, warm-up, etc).
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # WHY resource requests/limits:
+          # Requests: what the scheduler uses to place the pod on a node.
+          # Limits: hard cap — pod is OOM-killed if it exceeds memory limit.
+          # Setting both prevents noisy-neighbour issues in the node pool.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          # CSI Driver secret volume mount
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets"
+              readOnly: true
+
+          # Security hardening
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: azure-kv-secrets
+
+      terminationGracePeriodSeconds: 60   # Give in-flight requests time to complete

@@ -1,0 +1,9 @@
+output "vnet_id"                    { value = azurerm_virtual_network.main.id }
+output "subnet_aks_id"             { value = azurerm_subnet.aks.id }
+output "subnet_data_id"            { value = azurerm_subnet.data.id }
+output "subnet_endpoints_id"       { value = azurerm_subnet.endpoints.id }
+output "postgres_private_dns_zone_id"   { value = azurerm_private_dns_zone.postgres.id }
+output "servicebus_private_dns_zone_id" { value = azurerm_private_dns_zone.servicebus.id }
+output "blob_private_dns_zone_id"       { value = azurerm_private_dns_zone.blob.id }
+output "keyvault_private_dns_zone_id"   { value = azurerm_private_dns_zone.keyvault.id }
+output "acr_private_dns_zone_id"        { value = azurerm_private_dns_zone.acr.id }

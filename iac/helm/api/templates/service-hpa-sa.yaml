@@ -1,0 +1,185 @@
+###############################################################################
+# helm/api/templates/service-hpa-sa.yaml
+###############################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 80
+      targetPort: 3000
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-api
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    azure.workload.identity/client-id: {{ .Values.workloadIdentity.clientId | quote }}
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: azure-kv-secrets
+  namespace: {{ .Release.Namespace }}
+spec:
+  provider: azure
+  secretObjects:
+    - secretName: app-secrets
+      type: Opaque
+      data:
+        - objectName: db-connection-string
+          key: db-connection-string
+        - objectName: servicebus-connection-string
+          key: servicebus-connection-string
+        - objectName: jwt-secret
+          key: jwt-secret
+        - objectName: storage-connection-string
+          key: storage-connection-string
+  parameters:
+    usePodIdentity: "false"
+    clientID: {{ .Values.workloadIdentity.clientId | quote }}
+    keyvaultName: {{ .Values.keyvault.name | quote }}
+    cloudName: "AzurePublicCloud"
+    tenantId: {{ .Values.workloadIdentity.tenantId | quote }}
+    objects: |
+      array:
+        - |
+          objectName: db-connection-string
+          objectType: secret
+        - |
+          objectName: servicebus-connection-string
+          objectType: secret
+        - |
+          objectName: jwt-secret
+          objectType: secret
+        - |
+          objectName: storage-connection-string
+          objectType: secret
+---
+###############################################################################
+# Ingress #1 — /api/auth
+# Rate limit נמוך (10 req/min) — מגן מ-brute force על login
+# WHY Ingress נפרד: ב-NGINX Ingress אי-אפשר לתת annotations שונים לפי path
+# באותו resource. פתרון סטנדרטי: שני Ingress objects, שניהם עם same host.
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-auth
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # 10 req/min per IP — מספיק לשימוש לגיטימי, חוסם brute force
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-connections: "5"
+    # WHY limit-burst-multiplier: 1 = אין burst מעבר ל-limit
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "1"
+spec:
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
+---
+###############################################################################
+# Ingress #2 — כל שאר ה-endpoints
+# /health, /ready — ציבוריים, ללא auth (probe endpoints)
+# /api            — דורש Bearer token (נאכף ב-application layer)
+# /api/uploads    — דורש Bearer token + מחזיר SAS URL
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # Liveness probe — נדרש ע"י kubelet ו-Front Door
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
+
+          # Readiness probe — נדרש ע"י kubelet לפני שהפוד מקבל תעבורה
+          - path: /ready
+            pathType: Exact
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
+
+          # כל שאר ה-API routes
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80

@@ -1,0 +1,20 @@
+###############################################################################
+# helm/worker/values.yaml
+###############################################################################
+image:
+  repository: acrcloudtaskprod.azurecr.io/worker
+  tag: latest-main
+
+workloadIdentity:
+  clientId: ""
+  tenantId: ""
+
+keyvault:
+  name: ""
+
+serviceBus:
+  namespace: "sb-cloudtask-prod"
+
+keda:
+  minReplicas: 0    # Scale to zero when queue is empty
+  maxReplicas: 5

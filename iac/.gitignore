@@ -1,0 +1,26 @@
+# Terraform state — never commit, contains plaintext secrets
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform working directory
+.terraform/
+.terraform.lock.hcl
+
+# Variable files with real values — use environments/*.tfvars instead
+*.auto.tfvars
+override.tf
+override.tf.json
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Sensitive variable files
+secrets.tfvars
+*secrets*.tfvars
+
+# IDE
+.idea/
+.vscode/
+*.swp
